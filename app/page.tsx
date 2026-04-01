@@ -158,7 +158,7 @@ export default function Home() {
           <div className="flex items-center gap-2 flex-wrap justify-end">
             
             <a
-              href="https://github.com/Chens-ERD-Generator"
+              href="https://github.com/WuSandWitch/Chens-ERD-Generator"
               target="_blank"
               rel="noreferrer"
               className={buttonVariants({ variant: "outline", size: "sm" })}
