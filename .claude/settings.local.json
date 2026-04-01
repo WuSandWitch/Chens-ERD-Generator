@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(export PATH=\"$HOME/.nvm/versions/node/v24.11.0/bin:$PATH\")",
+      "Bash(npx shadcn@latest add textarea alert accordion card tabs sonner --yes)"
+    ]
+  }
+}
