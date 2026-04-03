@@ -160,8 +160,8 @@ export default function ChenCanvas({ graph, svgRef, onZoomReady }: ChenCanvasPro
       const ey = d.target.y ?? 0;
       const rx = d.source.x ?? 0; // relation/diamond center
       const ry = d.source.y ?? 0;
-      // Interpolate 25% from diamond toward entity
-      const t = 0.25;
+      // Interpolate 50% from diamond toward entity (midpoint)
+      const t = 0.5;
       const mx = rx + t * (ex - rx);
       const my = ry + t * (ey - ry);
       // Perpendicular offset

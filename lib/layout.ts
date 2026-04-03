@@ -92,7 +92,7 @@ function collisionRadius(n: ERNode): number {
   return 64; // attribute ellipse
 }
 
-const ATTR_DIST = 130;
+const ATTR_DIST = 100;
 
 export function runSimulation(graph: ERGraph): ERGraph {
   if (graph.nodes.length === 0) return graph;
@@ -165,11 +165,11 @@ export function runSimulation(graph: ERGraph): ERGraph {
   const specCircleNodes = graph.nodes.filter((n) => n.kind === "spec_circle");
 
   // ── Phase 1a: entity ring ────────────────────────────────────────────
-  const attrReach = ATTR_DIST + 64;
+  const attrReach = ATTR_DIST + 60;
   const N = Math.max(entityNodes.length, 1);
-  const minSeparation = attrReach * 2 + 60;
+  const minSeparation = attrReach * 2 + 20;
   const sinFactor = N === 1 ? 1 : Math.sin(Math.PI / N);
-  const entityRingR = Math.max(280, Math.ceil(minSeparation / (2 * sinFactor)) + 40);
+  const entityRingR = Math.max(200, Math.ceil(minSeparation / (2 * sinFactor)) + 20);
 
   entityNodes.forEach((n, i) => {
     const angle = (2 * Math.PI * i) / N - Math.PI / 2;
@@ -277,9 +277,9 @@ export function runSimulation(graph: ERGraph): ERGraph {
     superclassToCircleIds.get(superclassId)!.push(circle.id);
   });
 
-  const CIRCLE_DIST = 150; // px from superclass center to spec circle center
-  const SUBCLASS_DIST = 160; // px from spec circle center to subclass center
-  const CIRCLE_SPREAD = 120; // px perpendicular spacing between multiple circles
+  const CIRCLE_DIST = 120; // px from superclass center to spec circle center
+  const SUBCLASS_DIST = 130; // px from spec circle center to subclass center
+  const CIRCLE_SPREAD = 100; // px perpendicular spacing between multiple circles
 
   superclassToCircleIds.forEach((circleIds, superclassId) => {
     const superclass = nodeMap.get(superclassId);
@@ -338,11 +338,11 @@ export function runSimulation(graph: ERGraph): ERGraph {
         .distance((l) => {
           const s = l.source as ERNode;
           const t = l.target as ERNode;
-          if (s.kind === "spec_circle" || t.kind === "spec_circle") return 140;
+          if (s.kind === "spec_circle" || t.kind === "spec_circle") return 110;
           const isAttrEdge =
             s.kind === "attribute" || s.kind === "relation_attribute" ||
             t.kind === "attribute" || t.kind === "relation_attribute";
-          return isAttrEdge ? ATTR_DIST : 170;
+          return isAttrEdge ? ATTR_DIST : 130;
         })
         .strength((l) => {
           const s = l.source as ERNode;
@@ -351,7 +351,7 @@ export function runSimulation(graph: ERGraph): ERGraph {
           return 0.25;
         })
     )
-    .force("charge", d3.forceManyBody().strength(-1200))
+    .force("charge", d3.forceManyBody().strength(-700))
     .force("center", d3.forceCenter(0, 0).strength(0.02))
     .force(
       "collision",
