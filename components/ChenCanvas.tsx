@@ -122,6 +122,21 @@ export default function ChenCanvas({ graph, svgRef, onZoomReady }: ChenCanvasPro
       .attr("stroke-opacity", 0.7);
 
     // ── Inheritance edges (drawn from subclass→circle so marker-end faces circle) ──
+    // The line is stopped at the circle boundary so the arrowhead tip lands on the
+    // circle edge rather than being hidden behind the circle shape.
+    // marker refX=9, tip at x=10 → tip is 1px past endpoint → end line at R+1 from center.
+    function inheritEndpoint(subX: number, subY: number, circX: number, circY: number) {
+      const dx = circX - subX;
+      const dy = circY - subY;
+      const len = Math.sqrt(dx * dx + dy * dy) || 1;
+      const ux = dx / len;
+      const uy = dy / len;
+      return {
+        x: circX - (SPEC_CIRCLE_R + 1) * ux,
+        y: circY - (SPEC_CIRCLE_R + 1) * uy,
+      };
+    }
+
     linkGroup
       .selectAll<SVGLineElement, ResolvedLink>("line.inherit-edge")
       .data(inheritLinks)
@@ -131,47 +146,32 @@ export default function ChenCanvas({ graph, svgRef, onZoomReady }: ChenCanvasPro
       // Draw from target (subclass) → source (circle); arrowhead points toward circle
       .attr("x1", (d) => d.target.x ?? 0)
       .attr("y1", (d) => d.target.y ?? 0)
-      .attr("x2", (d) => d.source.x ?? 0)
-      .attr("y2", (d) => d.source.y ?? 0)
+      .attr("x2", (d) => inheritEndpoint(d.target.x ?? 0, d.target.y ?? 0, d.source.x ?? 0, d.source.y ?? 0).x)
+      .attr("y2", (d) => inheritEndpoint(d.target.x ?? 0, d.target.y ?? 0, d.source.x ?? 0, d.source.y ?? 0).y)
       .style("stroke", "hsl(var(--foreground))")
       .attr("stroke-width", 1.5)
       .attr("stroke-opacity", 0.7)
       .attr("marker-end", "url(#arrow-inherit)");
 
-    // Cardinality labels — placed just outside the entity node boundary,
-    // along the line from the relation center to the entity center.
+    // Cardinality labels — placed 25% of the way from the diamond toward the entity,
+    // offset perpendicularly so the label sits beside the edge rather than on it.
     function cardLabelPos(d: ResolvedLink): { x: number; y: number } {
-      const tx = d.target.x ?? 0; // entity center
-      const ty = d.target.y ?? 0;
-      const sx = d.source.x ?? 0; // relation center
-      const sy = d.source.y ?? 0;
-      const dx = sx - tx;
-      const dy = sy - ty;
+      const ex = d.target.x ?? 0; // entity center
+      const ey = d.target.y ?? 0;
+      const rx = d.source.x ?? 0; // relation/diamond center
+      const ry = d.source.y ?? 0;
+      // Interpolate 25% from diamond toward entity
+      const t = 0.25;
+      const mx = rx + t * (ex - rx);
+      const my = ry + t * (ey - ry);
+      // Perpendicular offset
+      const dx = ex - rx;
+      const dy = ey - ry;
       const len = Math.sqrt(dx * dx + dy * dy) || 1;
-      const ux = dx / len;
-      const uy = dy / len;
-
-      let edgeDist = 50; // fallback
-      const tk = d.target.kind;
-      if (tk === "entity") {
-        const hw = ENTITY_W / 2;
-        const hh = ENTITY_H / 2;
-        const tx2 = ux !== 0 ? hw / Math.abs(ux) : Infinity;
-        const ty2 = uy !== 0 ? hh / Math.abs(uy) : Infinity;
-        edgeDist = Math.min(tx2, ty2);
-      } else if (tk === "weak_entity") {
-        const hw = ENTITY_W / 2 + WEAK_ENTITY_OFFSET;
-        const hh = ENTITY_H / 2 + WEAK_ENTITY_OFFSET;
-        const tx2 = ux !== 0 ? hw / Math.abs(ux) : Infinity;
-        const ty2 = uy !== 0 ? hh / Math.abs(uy) : Infinity;
-        edgeDist = Math.min(tx2, ty2);
-      }
-
-      const LABEL_GAP = 14;
-      const PERP = 13;
+      const PERP = 12;
       return {
-        x: tx + (edgeDist + LABEL_GAP) * ux + (-uy) * PERP,
-        y: ty + (edgeDist + LABEL_GAP) * uy + ux * PERP,
+        x: mx + (-dy / len) * PERP,
+        y: my + (dx / len) * PERP,
       };
     }
 
@@ -384,8 +384,8 @@ export default function ChenCanvas({ graph, svgRef, onZoomReady }: ChenCanvasPro
           .selectAll<SVGLineElement, ResolvedLink>("line.inherit-edge")
           .attr("x1", (l) => l.target.x ?? 0)
           .attr("y1", (l) => l.target.y ?? 0)
-          .attr("x2", (l) => l.source.x ?? 0)
-          .attr("y2", (l) => l.source.y ?? 0);
+          .attr("x2", (l) => inheritEndpoint(l.target.x ?? 0, l.target.y ?? 0, l.source.x ?? 0, l.source.y ?? 0).x)
+          .attr("y2", (l) => inheritEndpoint(l.target.x ?? 0, l.target.y ?? 0, l.source.x ?? 0, l.source.y ?? 0).y);
 
         // Update cardinality labels
         linkGroup
