@@ -1,5 +1,5 @@
 import * as d3 from "d3";
-import type { Definition, ERGraph, ERNode, ERLink } from "./types";
+import type { Definition, ERGraph, ERNode, ERLink, SpecGenDef } from "./types";
 
 export function buildGraph(definitions: Definition[]): ERGraph {
   const nodes: ERNode[] = [];
@@ -13,19 +13,20 @@ export function buildGraph(definitions: Definition[]): ERGraph {
     }
   }
 
+  // Counter so multiple SPECIALIZATION blocks on the same superclass get unique IDs
+  const specCircleCounters = new Map<string, number>();
+
   for (const def of definitions) {
-    if (!("participants" in def)) {
-      const nodeKind = def.kind;
-      addNode({ id: `entity:${def.name}`, kind: nodeKind, label: def.name });
+    if (def.kind === "entity" || def.kind === "weak_entity") {
+      addNode({ id: `entity:${def.name}`, kind: def.kind, label: def.name });
       for (const attr of def.attributes) {
         const attrId = `attr:${def.name}:${attr.name}`;
         addNode({ id: attrId, kind: "attribute", label: attr.name, attributeType: attr.type });
         links.push({ source: `entity:${def.name}`, target: attrId });
       }
-    } else {
-      const nodeKind = def.kind;
+    } else if (def.kind === "relation" || def.kind === "weak_relation") {
       const relId = `relation:${def.name}`;
-      addNode({ id: relId, kind: nodeKind, label: def.name });
+      addNode({ id: relId, kind: def.kind, label: def.name });
       for (const participant of def.participants) {
         const entityId = `entity:${participant.entityName}`;
         if (!nodeIds.has(entityId)) {
@@ -44,6 +45,37 @@ export function buildGraph(definitions: Definition[]): ERGraph {
         addNode({ id: attrId, kind: "relation_attribute", label: attrName, attributeType: "regular" });
         links.push({ source: relId, target: attrId });
       }
+    } else {
+      // specialization | generalization
+      const sdef = def as SpecGenDef;
+      const idx = specCircleCounters.get(sdef.superclass) ?? 0;
+      specCircleCounters.set(sdef.superclass, idx + 1);
+
+      const circleId = `spec:${sdef.superclass}:${idx}`;
+      const circleLabel = sdef.constraint === "disjoint" ? "d" : "o";
+      addNode({ id: circleId, kind: "spec_circle", label: circleLabel });
+
+      // Ensure superclass entity node exists
+      const superclassId = `entity:${sdef.superclass}`;
+      if (!nodeIds.has(superclassId)) {
+        addNode({ id: superclassId, kind: "entity", label: sdef.superclass });
+      }
+
+      // Superclass → circle (participation controls single/double line)
+      links.push({
+        source: superclassId,
+        target: circleId,
+        participation: sdef.participation,
+      });
+
+      // Circle → each subclass (isInheritance = true → arrowhead drawn)
+      for (const sub of sdef.subclasses) {
+        const subId = `entity:${sub}`;
+        if (!nodeIds.has(subId)) {
+          addNode({ id: subId, kind: "entity", label: sub });
+        }
+        links.push({ source: circleId, target: subId, isInheritance: true });
+      }
     }
   }
 
@@ -52,14 +84,15 @@ export function buildGraph(definitions: Definition[]): ERGraph {
 
 // Bounding-circle radius matching actual rendered shape sizes + margin
 function collisionRadius(n: ERNode): number {
-  if (n.kind === "entity") return 76;          // rect 120×44, half-diag ≈ 64
-  if (n.kind === "weak_entity") return 86;     // outer rect 132×56, half-diag ≈ 72
-  if (n.kind === "relation") return 84;        // diamond 54, bounding circle ≈ 76
-  if (n.kind === "weak_relation") return 98;   // outer diamond 62, bounding circle ≈ 88
-  return 64;                                   // ellipse rx=52, dominant radius
+  if (n.kind === "entity") return 76;
+  if (n.kind === "weak_entity") return 86;
+  if (n.kind === "relation") return 84;
+  if (n.kind === "weak_relation") return 98;
+  if (n.kind === "spec_circle") return 32;
+  return 64; // attribute ellipse
 }
 
-const ATTR_DIST = 130; // distance from parent center to attribute center
+const ATTR_DIST = 130;
 
 export function runSimulation(graph: ERGraph): ERGraph {
   if (graph.nodes.length === 0) return graph;
@@ -69,6 +102,8 @@ export function runSimulation(graph: ERGraph): ERGraph {
   // ── Build adjacency maps ─────────────────────────────────────────────
   const relToEntityIds = new Map<string, string[]>();
   const parentToAttrIds = new Map<string, string[]>();
+  const circleToSuperclassId = new Map<string, string>();
+  const circleToSubclassIds = new Map<string, string[]>();
 
   for (const link of graph.links) {
     const srcId = typeof link.source === "string" ? link.source : (link.source as ERNode).id;
@@ -89,23 +124,50 @@ export function runSimulation(graph: ERGraph): ERGraph {
       if (!parentToAttrIds.has(srcId)) parentToAttrIds.set(srcId, []);
       parentToAttrIds.get(srcId)!.push(tgtId);
     }
+
+    // Spec circle adjacency
+    if (tgt.kind === "spec_circle" && (tgtIsEntity || src.kind === "entity" || src.kind === "weak_entity")) {
+      circleToSuperclassId.set(tgtId, srcId);
+    }
+    if (src.kind === "spec_circle" && link.isInheritance) {
+      if (!circleToSubclassIds.has(srcId)) circleToSubclassIds.set(srcId, []);
+      circleToSubclassIds.get(srcId)!.push(tgtId);
+    }
   }
 
+  // Identify which entity nodes are exclusively subclasses (not superclasses, no explicit relations)
+  // These should NOT go on the entity ring — their placement comes from spec layout.
+  const subclassOnlyIds = new Set<string>();
+  circleToSubclassIds.forEach((subIds) => {
+    for (const subId of subIds) {
+      subclassOnlyIds.add(subId);
+    }
+  });
+  // Remove from subclassOnlyIds anything that is ALSO a superclass
+  circleToSuperclassId.forEach((superclassId) => {
+    subclassOnlyIds.delete(superclassId);
+  });
+  // Remove anything that participates in a relation (has explicit connections beyond spec)
+  relToEntityIds.forEach((entityIds) => {
+    for (const eid of entityIds) {
+      subclassOnlyIds.delete(eid);
+    }
+  });
+
   const entityNodes = graph.nodes.filter(
-    (n) => n.kind === "entity" || n.kind === "weak_entity"
+    (n) =>
+      (n.kind === "entity" || n.kind === "weak_entity") &&
+      !subclassOnlyIds.has(n.id)
   );
   const relationNodes = graph.nodes.filter(
     (n) => n.kind === "relation" || n.kind === "weak_relation"
   );
+  const specCircleNodes = graph.nodes.filter((n) => n.kind === "spec_circle");
 
   // ── Phase 1a: entity ring ────────────────────────────────────────────
-  // Ring radius must guarantee adjacent entities' attribute fans don't overlap.
-  // Attribute fan reaches ATTR_DIST + collisionRadius(attr) from entity center.
-  // Adjacent entity footprints need gap >= 2 * (ATTR_DIST + 64).
-  // For N entities on ring radius R: adjacent distance = 2R * sin(π/N).
-  const attrReach = ATTR_DIST + 64; // furthest point of an attribute from its entity center
+  const attrReach = ATTR_DIST + 64;
   const N = Math.max(entityNodes.length, 1);
-  const minSeparation = attrReach * 2 + 60; // 60px gap between fans
+  const minSeparation = attrReach * 2 + 60;
   const sinFactor = N === 1 ? 1 : Math.sin(Math.PI / N);
   const entityRingR = Math.max(280, Math.ceil(minSeparation / (2 * sinFactor)) + 40);
 
@@ -116,9 +178,6 @@ export function runSimulation(graph: ERGraph): ERGraph {
   });
 
   // ── Phase 1b: relation placement ────────────────────────────────────
-  // Put each relation at the centroid of its participants.
-  // When multiple relations share the same participant pair, push them
-  // apart perpendicularly to the line connecting those two entities.
   relationNodes.forEach((rel) => {
     const entityIds = relToEntityIds.get(rel.id) ?? [];
     let cx = 0, cy = 0, count = 0;
@@ -130,8 +189,7 @@ export function runSimulation(graph: ERGraph): ERGraph {
     rel.y = count > 0 ? cy / count : 0;
   });
 
-  // Resolve collision between co-located relations.
-  // For relations sharing the exact same entity pair, offset perpendicularly.
+  // Resolve collision between co-located relations
   for (let i = 0; i < relationNodes.length; i++) {
     for (let j = i + 1; j < relationNodes.length; j++) {
       const a = relationNodes[i], b = relationNodes[j];
@@ -139,7 +197,6 @@ export function runSimulation(graph: ERGraph): ERGraph {
       const dy = (b.y ?? 0) - (a.y ?? 0);
       const dist = Math.sqrt(dx * dx + dy * dy);
       if (dist < 100) {
-        // Find perpendicular direction from the pair's shared entity segment
         const aEntities = relToEntityIds.get(a.id) ?? [];
         let perpX = 0, perpY = 1;
         if (aEntities.length >= 2) {
@@ -163,9 +220,6 @@ export function runSimulation(graph: ERGraph): ERGraph {
   }
 
   // ── Phase 1c: attribute fan placement ───────────────────────────────
-  // Fan attributes outward, biased AWAY from all other structural nodes
-  // (not just away from origin — this is what previously caused fans to
-  // point toward adjacent entities).
   const structuralNodes = graph.nodes.filter(
     (n) => n.kind !== "attribute" && n.kind !== "relation_attribute"
   );
@@ -177,8 +231,6 @@ export function runSimulation(graph: ERGraph): ERGraph {
     const px = parent.x ?? 0;
     const py = parent.y ?? 0;
 
-    // Compute weighted "away" direction from all other structural nodes.
-    // Weight inversely by distance so nearby nodes matter more.
     let awayX = 0, awayY = 0;
     for (const other of structuralNodes) {
       if (other.id === parentId) continue;
@@ -191,7 +243,6 @@ export function runSimulation(graph: ERGraph): ERGraph {
       awayY += dy / dist2;
     }
 
-    // Normalise; fall back to "away from origin" if degenerate
     const awayLen = Math.sqrt(awayX * awayX + awayY * awayY);
     let baseAngle: number;
     if (awayLen > 1e-6) {
@@ -200,7 +251,6 @@ export function runSimulation(graph: ERGraph): ERGraph {
       baseAngle = Math.atan2(py, px);
     }
 
-    // ~45° per attribute, max 180°
     const fanSpread = Math.min(Math.PI, attrIds.length * 0.78);
 
     attrIds.forEach((aid, i) => {
@@ -217,9 +267,59 @@ export function runSimulation(graph: ERGraph): ERGraph {
     placeAttrsInFan(parentId, attrIds);
   });
 
+  // ── Phase 1d: spec circle and subclass placement ─────────────────────
+  // Group spec circles by superclass to spread multiple circles
+  const superclassToCircleIds = new Map<string, string[]>();
+  specCircleNodes.forEach((circle) => {
+    const superclassId = circleToSuperclassId.get(circle.id);
+    if (!superclassId) return;
+    if (!superclassToCircleIds.has(superclassId)) superclassToCircleIds.set(superclassId, []);
+    superclassToCircleIds.get(superclassId)!.push(circle.id);
+  });
+
+  const CIRCLE_DIST = 150; // px from superclass center to spec circle center
+  const SUBCLASS_DIST = 160; // px from spec circle center to subclass center
+  const CIRCLE_SPREAD = 120; // px perpendicular spacing between multiple circles
+
+  superclassToCircleIds.forEach((circleIds, superclassId) => {
+    const superclass = nodeMap.get(superclassId);
+    if (!superclass) return;
+
+    const sx = superclass.x ?? 0;
+    const sy = superclass.y ?? 0;
+
+    // Outward angle: from origin through superclass position
+    // (away from the center of the entity ring)
+    const outAngle = Math.atan2(sy, sx);
+    const perpAngle = outAngle + Math.PI / 2;
+    const numCircles = circleIds.length;
+
+    circleIds.forEach((circleId, idx) => {
+      const circle = nodeMap.get(circleId);
+      if (!circle) return;
+
+      // Spread multiple circles perpendicularly; center for single circle
+      const perpOffset = numCircles === 1 ? 0 : (idx - (numCircles - 1) / 2) * CIRCLE_SPREAD;
+      circle.x = sx + CIRCLE_DIST * Math.cos(outAngle) + perpOffset * Math.cos(perpAngle);
+      circle.y = sy + CIRCLE_DIST * Math.sin(outAngle) + perpOffset * Math.sin(perpAngle);
+
+      // Fan subclasses outward from the circle in the same outward direction
+      const subIds = circleToSubclassIds.get(circleId) ?? [];
+      const numSubs = subIds.length;
+      const fanSpread = Math.min(Math.PI * 0.85, numSubs * 0.55);
+
+      subIds.forEach((subId, si) => {
+        const sub = nodeMap.get(subId);
+        if (!sub) return;
+        const t = numSubs === 1 ? 0.5 : si / (numSubs - 1);
+        const subAngle = outAngle + (t - 0.5) * fanSpread;
+        sub.x = (circle.x ?? 0) + SUBCLASS_DIST * Math.cos(subAngle);
+        sub.y = (circle.y ?? 0) + SUBCLASS_DIST * Math.sin(subAngle);
+      });
+    });
+  });
+
   // ── Phase 2: D3 force refinement ────────────────────────────────────
-  // Pre-positioning is clean; force sim only needs minor adjustments.
-  // Keep link strength low so collision wins over attraction.
   const resolvedLinks = graph.links
     .map((l) => ({
       ...l,
@@ -238,12 +338,18 @@ export function runSimulation(graph: ERGraph): ERGraph {
         .distance((l) => {
           const s = l.source as ERNode;
           const t = l.target as ERNode;
+          if (s.kind === "spec_circle" || t.kind === "spec_circle") return 140;
           const isAttrEdge =
             s.kind === "attribute" || s.kind === "relation_attribute" ||
             t.kind === "attribute" || t.kind === "relation_attribute";
           return isAttrEdge ? ATTR_DIST : 170;
         })
-        .strength(0.25) // weak — let collision take priority
+        .strength((l) => {
+          const s = l.source as ERNode;
+          const t = l.target as ERNode;
+          if (s.kind === "spec_circle" || t.kind === "spec_circle") return 0.5;
+          return 0.25;
+        })
     )
     .force("charge", d3.forceManyBody().strength(-1200))
     .force("center", d3.forceCenter(0, 0).strength(0.02))

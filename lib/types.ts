@@ -12,6 +12,8 @@ export interface Attribute {
 
 export type Participation = "total" | "partial";
 
+export type SpecConstraint = "disjoint" | "overlapping";
+
 export interface EntityDef {
   kind: "entity" | "weak_entity";
   name: string;
@@ -31,7 +33,15 @@ export interface RelationDef {
   attributes: string[];
 }
 
-export type Definition = EntityDef | RelationDef;
+export interface SpecGenDef {
+  kind: "specialization" | "generalization";
+  superclass: string;
+  constraint: SpecConstraint;
+  participation: Participation;
+  subclasses: string[];
+}
+
+export type Definition = EntityDef | RelationDef | SpecGenDef;
 
 export interface ParseResult {
   definitions: Definition[];
@@ -45,7 +55,8 @@ export type NodeKind =
   | "relation"
   | "weak_relation"
   | "attribute"
-  | "relation_attribute";
+  | "relation_attribute"
+  | "spec_circle";
 
 export interface ERNode {
   id: string;
@@ -64,6 +75,7 @@ export interface ERLink {
   cardinality?: string;
   cardinalityEnd?: "source" | "target";
   participation?: Participation;
+  isInheritance?: boolean;
 }
 
 export interface ERGraph {

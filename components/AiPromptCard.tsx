@@ -20,6 +20,13 @@ ChenER syntax rules:
     EntityName  cardinality  participation
   where cardinality is 1, N, or M and participation is total or partial (default: partial)
 - Non-entity lines inside RELATION or WEAK_RELATION are relationship attributes
+- SPECIALIZATION SuperclassName disjoint|overlapping total|partial { Subclass1\n  Subclass2 } defines EER specialization
+  - disjoint = subclasses are mutually exclusive ("d" circle)
+  - overlapping = an instance can belong to multiple subclasses ("o" circle)
+  - total = every superclass instance must belong to a subclass (double line)
+  - partial = participation is optional (single line)
+- GENERALIZATION uses identical syntax to SPECIALIZATION
+- Each subclass is listed on its own line inside the braces
 
 Output example:
 ENTITY Department {
@@ -88,6 +95,25 @@ Always pair a WEAK_ENTITY with a WEAK_RELATION connecting it to its owner.
 - 1 = exactly one
 - N = many (on one side)
 - M = many (on the other side, for M:N relationships)
+
+### Specialization / Generalization (EER)
+SPECIALIZATION SuperclassName disjoint total {
+  Subclass1
+  Subclass2
+}
+
+GENERALIZATION SuperclassName overlapping partial {
+  Entity1
+  Entity2
+}
+
+- disjoint = subclasses are mutually exclusive ("d" circle rendered)
+- overlapping = an instance can belong to multiple subclasses ("o" circle)
+- total = every superclass instance must belong to a subclass (double line to circle)
+- partial = participation in subclasses is optional (single line to circle)
+- Each subclass is a separate entity; list one per line inside the braces
+- Multiple SPECIALIZATION blocks on the same superclass each render as a separate circle
+- GENERALIZATION uses identical syntax to SPECIALIZATION
 `;
 
 export default function AiPromptCard() {
@@ -133,6 +159,9 @@ export default function AiPromptCard() {
       </TabsList>
 
       <TabsContent value="prompt">
+        <p className="text-sm text-muted-foreground mb-3">
+          Copy this system prompt and paste it into any AI chat (Claude, ChatGPT, etc.). Then describe your ER diagram in plain language — the AI will reply with ChenER DSL you can paste directly into the editor.
+        </p>
         <pre className="text-xs bg-muted rounded-md p-4 overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed max-h-80 overflow-y-auto">
           {AI_PROMPT}
         </pre>
@@ -145,6 +174,9 @@ export default function AiPromptCard() {
       </TabsContent>
 
       <TabsContent value="skill">
+        <p className="text-sm text-muted-foreground mb-3">
+          Download this file and add it to your Claude project as a custom skill. Claude will then automatically generate ChenER DSL whenever you describe an ER diagram, without needing to paste a prompt each time.
+        </p>
         <pre className="text-xs bg-muted rounded-md p-4 overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed max-h-80 overflow-y-auto">
           {SKILL_MD}
         </pre>

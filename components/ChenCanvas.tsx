@@ -18,6 +18,7 @@ const WEAK_DIAMOND_OFFSET = 8;  // px outset for double diamond
 const ELLIPSE_RX = 52;
 const ELLIPSE_RY = 22;
 const ELLIPSE_INNER_OFFSET = 5;
+const SPEC_CIRCLE_R = 14;       // radius of the spec/gen circle node
 
 type ResolvedLink = ERLink & { source: ERNode; target: ERNode };
 type ExpandedLink = ResolvedLink & { offsetSign: number };
@@ -88,9 +89,12 @@ export default function ChenCanvas({ graph, svgRef, onZoomReady }: ChenCanvasPro
         (l): l is ResolvedLink => l.source != null && l.target != null
       );
 
-    // Expand total-participation links into two parallel lines (offsetSign ±1),
-    // partial/default links get offsetSign 0 (single line)
-    const expandedLinks: ExpandedLink[] = resolvedLinks.flatMap((l) =>
+    // Split: inheritance links (circle→subclass with arrowhead) vs regular links
+    const inheritLinks = resolvedLinks.filter((l) => l.isInheritance);
+    const regularLinks = resolvedLinks.filter((l) => !l.isInheritance);
+
+    // Expand total-participation regular links into two parallel lines (offsetSign ±1)
+    const expandedLinks: ExpandedLink[] = regularLinks.flatMap((l) =>
       l.participation === "total"
         ? [
             { ...l, offsetSign: 1 },
@@ -102,6 +106,7 @@ export default function ChenCanvas({ graph, svgRef, onZoomReady }: ChenCanvasPro
     // Draw links first (behind nodes)
     const linkGroup = g.append("g").attr("class", "links");
 
+    // ── Regular edges ─────────────────────────────────────────────────
     linkGroup
       .selectAll<SVGLineElement, ExpandedLink>("line.edge")
       .data(expandedLinks)
@@ -116,6 +121,23 @@ export default function ChenCanvas({ graph, svgRef, onZoomReady }: ChenCanvasPro
       .attr("stroke-width", 1.5)
       .attr("stroke-opacity", 0.7);
 
+    // ── Inheritance edges (drawn from subclass→circle so marker-end faces circle) ──
+    linkGroup
+      .selectAll<SVGLineElement, ResolvedLink>("line.inherit-edge")
+      .data(inheritLinks)
+      .enter()
+      .append("line")
+      .attr("class", "inherit-edge")
+      // Draw from target (subclass) → source (circle); arrowhead points toward circle
+      .attr("x1", (d) => d.target.x ?? 0)
+      .attr("y1", (d) => d.target.y ?? 0)
+      .attr("x2", (d) => d.source.x ?? 0)
+      .attr("y2", (d) => d.source.y ?? 0)
+      .style("stroke", "hsl(var(--foreground))")
+      .attr("stroke-width", 1.5)
+      .attr("stroke-opacity", 0.7)
+      .attr("marker-end", "url(#arrow-inherit)");
+
     // Cardinality labels — placed just outside the entity node boundary,
     // along the line from the relation center to the entity center.
     function cardLabelPos(d: ResolvedLink): { x: number; y: number } {
@@ -123,14 +145,12 @@ export default function ChenCanvas({ graph, svgRef, onZoomReady }: ChenCanvasPro
       const ty = d.target.y ?? 0;
       const sx = d.source.x ?? 0; // relation center
       const sy = d.source.y ?? 0;
-      // Unit vector from entity toward relation
       const dx = sx - tx;
       const dy = sy - ty;
       const len = Math.sqrt(dx * dx + dy * dy) || 1;
       const ux = dx / len;
       const uy = dy / len;
 
-      // Distance from entity center to its boundary along (ux,uy)
       let edgeDist = 50; // fallback
       const tk = d.target.kind;
       if (tk === "entity") {
@@ -147,8 +167,6 @@ export default function ChenCanvas({ graph, svgRef, onZoomReady }: ChenCanvasPro
         edgeDist = Math.min(tx2, ty2);
       }
 
-      // Place label outside the node edge, then nudge 13px perpendicular to the line
-      // so it sits beside the edge rather than on top of it
       const LABEL_GAP = 14;
       const PERP = 13;
       return {
@@ -159,7 +177,7 @@ export default function ChenCanvas({ graph, svgRef, onZoomReady }: ChenCanvasPro
 
     linkGroup
       .selectAll<SVGTextElement, ResolvedLink>("text.card-label")
-      .data(resolvedLinks.filter((l) => l.cardinality))
+      .data(regularLinks.filter((l) => l.cardinality))
       .enter()
       .append("text")
       .attr("class", "card-label")
@@ -207,7 +225,6 @@ export default function ChenCanvas({ graph, svgRef, onZoomReady }: ChenCanvasPro
 
     // ── Weak Entity → two concentric rects ───────────────────────────
     const weakEntities = nodesSel.filter((d) => d.kind === "weak_entity");
-    // Outer rect
     weakEntities
       .append("rect")
       .attr("x", -(ENTITY_W / 2 + WEAK_ENTITY_OFFSET))
@@ -218,7 +235,6 @@ export default function ChenCanvas({ graph, svgRef, onZoomReady }: ChenCanvasPro
       .style("stroke", "hsl(var(--foreground))")
       .attr("stroke-width", 2)
       .attr("rx", 2);
-    // Inner rect
     weakEntities
       .append("rect")
       .attr("x", -ENTITY_W / 2)
@@ -258,14 +274,12 @@ export default function ChenCanvas({ graph, svgRef, onZoomReady }: ChenCanvasPro
     // ── Weak Relation → two concentric diamonds ───────────────────────
     const weakRelations = nodesSel.filter((d) => d.kind === "weak_relation");
     const wds = DIAMOND_SIZE + WEAK_DIAMOND_OFFSET;
-    // Outer diamond
     weakRelations
       .append("polygon")
       .attr("points", `0,${-wds} ${wds},0 0,${wds} ${-wds},0`)
       .style("fill", "hsl(var(--card))")
       .style("stroke", "hsl(var(--foreground))")
       .attr("stroke-width", 2);
-    // Inner diamond
     weakRelations
       .append("polygon")
       .attr("points", `0,${-ds} ${ds},0 0,${ds} ${-ds},0`)
@@ -280,12 +294,28 @@ export default function ChenCanvas({ graph, svgRef, onZoomReady }: ChenCanvasPro
       .style("fill", "hsl(var(--foreground))")
       .text((d) => d.label);
 
+    // ── Spec/Gen circle → small circle with "d" or "o" label ─────────
+    const specCircles = nodesSel.filter((d) => d.kind === "spec_circle");
+    specCircles
+      .append("circle")
+      .attr("r", SPEC_CIRCLE_R)
+      .style("fill", "hsl(var(--background))")
+      .style("stroke", "hsl(var(--foreground))")
+      .attr("stroke-width", 2);
+    specCircles
+      .append("text")
+      .attr("text-anchor", "middle")
+      .attr("dominant-baseline", "middle")
+      .attr("font-size", 13)
+      .attr("font-weight", "bold")
+      .style("fill", "hsl(var(--foreground))")
+      .text((d) => d.label);
+
     // ── Attribute ellipses ────────────────────────────────────────────
     const attrs = nodesSel.filter(
       (d) => d.kind === "attribute" || d.kind === "relation_attribute"
     );
 
-    // Outer ellipse for all attrs
     attrs
       .append("ellipse")
       .attr("rx", ELLIPSE_RX)
@@ -297,7 +327,6 @@ export default function ChenCanvas({ graph, svgRef, onZoomReady }: ChenCanvasPro
         d.attributeType === "derived" ? "5,3" : "none"
       );
 
-    // Inner ellipse for multi-valued
     attrs
       .filter((d) => d.attributeType === "multi_valued")
       .append("ellipse")
@@ -307,7 +336,6 @@ export default function ChenCanvas({ graph, svgRef, onZoomReady }: ChenCanvasPro
       .style("stroke", "hsl(var(--foreground))")
       .attr("stroke-width", 1.5);
 
-    // Attribute text — primary_key: solid underline via CSS; partial_key: no decoration (line drawn below)
     attrs
       .append("text")
       .attr("text-anchor", "middle")
@@ -319,7 +347,7 @@ export default function ChenCanvas({ graph, svgRef, onZoomReady }: ChenCanvasPro
       )
       .text((d) => d.label);
 
-    // Dashed underline for partial_key — drawn as a manual <line> so it exports correctly
+    // Dashed underline for partial_key
     attrs
       .filter((d) => d.attributeType === "partial_key")
       .append("line")
@@ -343,13 +371,21 @@ export default function ChenCanvas({ graph, svgRef, onZoomReady }: ChenCanvasPro
         d.y = event.y;
         d3.select(this).attr("transform", `translate(${event.x},${event.y})`);
 
-        // Update all edge lines (single + double)
+        // Update regular edge lines
         linkGroup
           .selectAll<SVGLineElement, ExpandedLink>("line.edge")
           .attr("x1", (l) => (l.source.x ?? 0) + perpOffset(l).px)
           .attr("y1", (l) => (l.source.y ?? 0) + perpOffset(l).py)
           .attr("x2", (l) => (l.target.x ?? 0) + perpOffset(l).px)
           .attr("y2", (l) => (l.target.y ?? 0) + perpOffset(l).py);
+
+        // Update inheritance edges (drawn reversed: target=subclass → source=circle)
+        linkGroup
+          .selectAll<SVGLineElement, ResolvedLink>("line.inherit-edge")
+          .attr("x1", (l) => l.target.x ?? 0)
+          .attr("y1", (l) => l.target.y ?? 0)
+          .attr("x2", (l) => l.source.x ?? 0)
+          .attr("y2", (l) => l.source.y ?? 0);
 
         // Update cardinality labels
         linkGroup
@@ -418,6 +454,23 @@ export default function ChenCanvas({ graph, svgRef, onZoomReady }: ChenCanvasPro
               style={{ fill: "hsl(var(--border))", opacity: 0.6 }}
             />
           </pattern>
+          {/* Arrowhead for specialization/generalization inheritance lines.
+              Points toward the spec circle (inheritance direction indicator).
+              Line is drawn subclass→circle so marker-end lands at circle. */}
+          <marker
+            id="arrow-inherit"
+            markerWidth="10"
+            markerHeight="8"
+            refX="9"
+            refY="4"
+            orient="auto"
+            markerUnits="userSpaceOnUse"
+          >
+            <polygon
+              points="0 0, 10 4, 0 8"
+              style={{ fill: "hsl(var(--foreground))" }}
+            />
+          </marker>
         </defs>
         <rect width="100%" height="100%" fill="url(#grid)" />
         <g ref={gRef} data-export-root="true" />

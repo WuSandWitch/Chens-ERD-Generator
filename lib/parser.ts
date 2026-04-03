@@ -3,6 +3,8 @@ import type {
   Definition,
   EntityDef,
   RelationDef,
+  SpecGenDef,
+  SpecConstraint,
   Attribute,
   AttributeType,
   Participation,
@@ -30,19 +32,31 @@ export function parseDSL(input: string): ParseResult {
   // Strip line comments
   const stripped = input.replace(/\/\/[^\n]*/g, "");
 
-  // Match top-level blocks — WEAK_* must come before bare ENTITY/RELATION
-  const blockRegex =
-    /(WEAK_ENTITY|ENTITY|WEAK_RELATION|RELATION)\s+(\w+)\s*\{([^}]*)\}/g;
-  let match: RegExpExecArray | null;
-
+  // ── First pass: collect entity names (regular + weak) ──────────────
   const entityNames = new Set<string>();
 
-  // First pass: collect all entity names (both regular and weak)
   const firstPassRegex = /(?:WEAK_ENTITY|ENTITY)\s+(\w+)\s*\{/g;
   let fp: RegExpExecArray | null;
   while ((fp = firstPassRegex.exec(stripped)) !== null) {
     entityNames.add(fp[1]);
   }
+
+  // Also collect superclass and subclass names from SPECIALIZATION/GENERALIZATION
+  // so that RELATION blocks can reference them as participants.
+  const specFirstPassRegex =
+    /(?:SPECIALIZATION|GENERALIZATION)\s+(\w+)\s+(?:disjoint|overlapping)\s+(?:total|partial)\s*\{([^}]*)\}/g;
+  let sfp: RegExpExecArray | null;
+  while ((sfp = specFirstPassRegex.exec(stripped)) !== null) {
+    entityNames.add(sfp[1]); // superclass
+    for (const line of sfp[2].split("\n").map((l) => l.trim()).filter(Boolean)) {
+      entityNames.add(line); // each subclass
+    }
+  }
+
+  // ── Parse ENTITY / WEAK_ENTITY / RELATION / WEAK_RELATION blocks ───
+  const blockRegex =
+    /(WEAK_ENTITY|ENTITY|WEAK_RELATION|RELATION)\s+(\w+)\s*\{([^}]*)\}/g;
+  let match: RegExpExecArray | null;
 
   while ((match = blockRegex.exec(stripped)) !== null) {
     const keyword = match[1] as
@@ -94,7 +108,6 @@ export function parseDSL(input: string): ParseResult {
         } else if (parts.length === 1 && parts[0]) {
           relAttributes.push(parts[0]);
         } else if (line.trim()) {
-          // Fallback: treat unrecognised lines as attributes
           relAttributes.push(line.trim());
         }
       }
@@ -114,8 +127,45 @@ export function parseDSL(input: string): ParseResult {
     }
   }
 
+  // ── Parse SPECIALIZATION / GENERALIZATION blocks ────────────────────
+  // Syntax: SPECIALIZATION SuperclassName disjoint|overlapping total|partial {
+  //           Subclass1
+  //           Subclass2
+  //         }
+  const specRegex =
+    /(SPECIALIZATION|GENERALIZATION)\s+(\w+)\s+(disjoint|overlapping)\s+(total|partial)\s*\{([^}]*)\}/g;
+  let sm: RegExpExecArray | null;
+
+  while ((sm = specRegex.exec(stripped)) !== null) {
+    const keyword = sm[1] as "SPECIALIZATION" | "GENERALIZATION";
+    const superclass = sm[2];
+    const constraint = sm[3] as SpecConstraint;
+    const participation = sm[4] as Participation;
+    const body = sm[5];
+
+    const subclasses = body
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
+
+    if (subclasses.length === 0) {
+      errors.push(`${keyword} "${superclass}" must list at least one subclass.`);
+      continue;
+    }
+
+    definitions.push({
+      kind: keyword === "SPECIALIZATION" ? "specialization" : "generalization",
+      superclass,
+      constraint,
+      participation,
+      subclasses,
+    } as SpecGenDef);
+  }
+
   if (definitions.length === 0 && stripped.trim().length > 0) {
-    errors.push("No valid ENTITY, WEAK_ENTITY, RELATION, or WEAK_RELATION blocks found.");
+    errors.push(
+      "No valid ENTITY, WEAK_ENTITY, RELATION, WEAK_RELATION, SPECIALIZATION, or GENERALIZATION blocks found."
+    );
   }
 
   return { definitions, errors };

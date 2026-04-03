@@ -47,6 +47,10 @@ const QUICK_REF = [
     title: "Attribute prefixes",
     content: "*attr  → primary key (underlined)\n*attr  → partial key in WEAK_ENTITY (dashed)\n[attr] → multi-valued (double ellipse)\n(attr) → derived (dashed ellipse)\nattr   → regular",
   },
+  {
+    title: "Specialization / Generalization",
+    content: `SPECIALIZATION SuperclassName disjoint total {\n  Subclass1\n  Subclass2\n}\n\nGENERALIZATION SuperclassName overlapping partial {\n  Entity1\n  Entity2\n}\n\n// disjoint → "d" circle, overlapping → "o" circle\n// total → double line, partial → single line\n// Arrow on each subclass line points toward circle`,
+  },
 ];
 
 export default function DslEditor({
