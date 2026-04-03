@@ -121,19 +121,34 @@ export default function ChenCanvas({ graph, svgRef, onZoomReady }: ChenCanvasPro
       .attr("stroke-width", 1.5)
       .attr("stroke-opacity", 0.7);
 
-    // ── Inheritance edges (drawn from subclass→circle so marker-end faces circle) ──
-    // The line is stopped at the circle boundary so the arrowhead tip lands on the
-    // circle edge rather than being hidden behind the circle shape.
-    // marker refX=9, tip at x=10 → tip is 1px past endpoint → end line at R+1 from center.
-    function inheritEndpoint(subX: number, subY: number, circX: number, circY: number) {
-      const dx = circX - subX;
-      const dy = circY - subY;
+    // ── Inheritance edges: circle → subclass, arrowhead at subclass end ──
+    // Arrow points FROM circle OUTWARD toward each subclass (Elmasri & Navathe EER).
+    // Line starts just outside the circle boundary; ends just outside the entity
+    // boundary so the arrowhead tip sits on the entity edge.
+    function inheritLineStart(circX: number, circY: number, subX: number, subY: number) {
+      const dx = subX - circX;
+      const dy = subY - circY;
+      const len = Math.sqrt(dx * dx + dy * dy) || 1;
+      return {
+        x: circX + SPEC_CIRCLE_R * (dx / len),
+        y: circY + SPEC_CIRCLE_R * (dy / len),
+      };
+    }
+    function inheritLineEnd(circX: number, circY: number, subX: number, subY: number, subKind: string) {
+      const dx = subX - circX;
+      const dy = subY - circY;
       const len = Math.sqrt(dx * dx + dy * dy) || 1;
       const ux = dx / len;
       const uy = dy / len;
+      const hw = subKind === "weak_entity" ? ENTITY_W / 2 + WEAK_ENTITY_OFFSET : ENTITY_W / 2;
+      const hh = subKind === "weak_entity" ? ENTITY_H / 2 + WEAK_ENTITY_OFFSET : ENTITY_H / 2;
+      const bx = ux !== 0 ? hw / Math.abs(ux) : Infinity;
+      const by = uy !== 0 ? hh / Math.abs(uy) : Infinity;
+      const bdist = Math.min(bx, by);
+      // refX=9, tip at x=10 → tip 1px past endpoint → stop 1px outside boundary
       return {
-        x: circX - (SPEC_CIRCLE_R + 1) * ux,
-        y: circY - (SPEC_CIRCLE_R + 1) * uy,
+        x: subX - (bdist + 1) * ux,
+        y: subY - (bdist + 1) * uy,
       };
     }
 
@@ -143,11 +158,10 @@ export default function ChenCanvas({ graph, svgRef, onZoomReady }: ChenCanvasPro
       .enter()
       .append("line")
       .attr("class", "inherit-edge")
-      // Draw from target (subclass) → source (circle); arrowhead points toward circle
-      .attr("x1", (d) => d.target.x ?? 0)
-      .attr("y1", (d) => d.target.y ?? 0)
-      .attr("x2", (d) => inheritEndpoint(d.target.x ?? 0, d.target.y ?? 0, d.source.x ?? 0, d.source.y ?? 0).x)
-      .attr("y2", (d) => inheritEndpoint(d.target.x ?? 0, d.target.y ?? 0, d.source.x ?? 0, d.source.y ?? 0).y)
+      .attr("x1", (d) => inheritLineStart(d.source.x ?? 0, d.source.y ?? 0, d.target.x ?? 0, d.target.y ?? 0).x)
+      .attr("y1", (d) => inheritLineStart(d.source.x ?? 0, d.source.y ?? 0, d.target.x ?? 0, d.target.y ?? 0).y)
+      .attr("x2", (d) => inheritLineEnd(d.source.x ?? 0, d.source.y ?? 0, d.target.x ?? 0, d.target.y ?? 0, d.target.kind).x)
+      .attr("y2", (d) => inheritLineEnd(d.source.x ?? 0, d.source.y ?? 0, d.target.x ?? 0, d.target.y ?? 0, d.target.kind).y)
       .style("stroke", "hsl(var(--foreground))")
       .attr("stroke-width", 1.5)
       .attr("stroke-opacity", 0.7)
@@ -379,13 +393,13 @@ export default function ChenCanvas({ graph, svgRef, onZoomReady }: ChenCanvasPro
           .attr("x2", (l) => (l.target.x ?? 0) + perpOffset(l).px)
           .attr("y2", (l) => (l.target.y ?? 0) + perpOffset(l).py);
 
-        // Update inheritance edges (drawn reversed: target=subclass → source=circle)
+        // Update inheritance edges (circle → subclass)
         linkGroup
           .selectAll<SVGLineElement, ResolvedLink>("line.inherit-edge")
-          .attr("x1", (l) => l.target.x ?? 0)
-          .attr("y1", (l) => l.target.y ?? 0)
-          .attr("x2", (l) => inheritEndpoint(l.target.x ?? 0, l.target.y ?? 0, l.source.x ?? 0, l.source.y ?? 0).x)
-          .attr("y2", (l) => inheritEndpoint(l.target.x ?? 0, l.target.y ?? 0, l.source.x ?? 0, l.source.y ?? 0).y);
+          .attr("x1", (l) => inheritLineStart(l.source.x ?? 0, l.source.y ?? 0, l.target.x ?? 0, l.target.y ?? 0).x)
+          .attr("y1", (l) => inheritLineStart(l.source.x ?? 0, l.source.y ?? 0, l.target.x ?? 0, l.target.y ?? 0).y)
+          .attr("x2", (l) => inheritLineEnd(l.source.x ?? 0, l.source.y ?? 0, l.target.x ?? 0, l.target.y ?? 0, l.target.kind).x)
+          .attr("y2", (l) => inheritLineEnd(l.source.x ?? 0, l.source.y ?? 0, l.target.x ?? 0, l.target.y ?? 0, l.target.kind).y);
 
         // Update cardinality labels
         linkGroup
